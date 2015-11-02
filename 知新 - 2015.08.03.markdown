@@ -1,0 +1,191 @@
+﻿## 知新 - 2015.08.03
+
+标签（空格分隔）： 知新
+
+---
+
+视频监控的开发已经开始转入手机App开发的阶段了：又是一个很艰巨很艰巨的任务啊，因为所有的东西，包括手机端的网络程序开发都要从头开始学起。不过呢，痛并快乐着的过程中，往往蕴含着蜕变的力量。加油。
+
+### 模拟登录
+
+因为在手机端的浏览器性能多多少少受限，而且App相较于通用的浏览器，有更多可以利用的工具来辅助洒家开发视频监控的客户端，所以，思虑再三，在手机端开发专门的应用程序来获取视频流。系统工作的开始，需要用户的验证登录，这个就把我给难住了。利用浏览器，可以很轻松的完成这个过程，但是如果用java语言就完全不一样了。
+
+所以在动手开发App之前，先调查了一下如何模仿网页登录与验证，得到的结果是使用java提供的HttpURLConnection类来实现。本来可以使用HttpClient，但是浏览一下安卓的官方文档会发现，HttpClient这个已经是deprecated，不再推荐使用了。所以，就只能用java提供给我们的工具了。下面是我用来做实验用的代码，先贴代码，然后再解释。
+``` Java
+package com.lortech.InetTest;
+
+import java.io.BufferedReader;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
+import java.io.PrintWriter;
+import java.net.HttpURLConnection;
+import java.net.URL;
+
+public class InetTest {
+
+	public static void main(String[] args) {
+		// TODO Auto-generated method stub
+		try{
+			URL url = new URL("http://127.0.0.1/cgi-bin/user_action.cgi");
+			HttpURLConnection huc = (HttpURLConnection)url.openConnection();
+			huc.setRequestMethod("POST");
+			huc.setRequestProperty("charset", "UTF-8");
+			huc.setDoOutput(true);
+			huc.setDoInput(true);
+			OutputStreamWriter out = new OutputStreamWriter(huc.getOutputStream(), "UTF-8");
+//			PrintWriter out = new PrintWriter(new OutputStreamWriter(huc.getOutputStream()));
+			String para = "name=王涛&pwd=123456";
+			out.write(para);
+			out.flush();
+			out.close();
+			
+			huc.connect();
+			BufferedReader br = new BufferedReader(new InputStreamReader(huc.getInputStream(), "UTF-8"));
+
+			String temp;
+			while((temp = br.readLine()) != null){
+				temp = new String(temp.getBytes(), "utf-8");
+				System.out.println(temp);
+			}
+			System.out.println(huc.getResponseMessage() + "\n" + huc.getPermission());
+		}
+		catch(Exception e){
+			e.printStackTrace();
+		}
+	}
+
+}
+```
+程序真正的业务逻辑是从第16行开始的，URL类定义你将要访问的网络地址，这里我需要访问的本机上实验用的CGI脚本文件。这和从浏览器登录验证是不一样的：在浏览器上登录验证时，首页是html文件，而CGI仅仅作为该html文件form表单中的action出现。
+
+接下来的三行代码是获取上述URL指定的网址的链接，注意，此时还没有真正发生网络链接的动作。18、19行分别设置访问方式为POST，附加信息的编码方式为UTF-8。第20行设置该连接可以发送信息，21行设置可以接收信息。接下来的代码实例化OutputStreamWriter以便于向连接中写入附加信息。29行是真正的发生链接的语句，通过这一句就建立了该实验程序和远端服务器的联系了。从第30行开始一直到代码片结束，都是用来处理从服务器返回的信息的代码。
+
+### 浏览器上的首页
+
+下面这个浏览器端的首页代码，除了一个form表单，没什么好说的，不过为了以防遗忘，还是抄录在下，仅作备份吧。
+
+``` Html
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+<title>CGI测试用例</title>
+</head>
+<body>
+<form align="center" action="cgi-bin/user_action.cgi" method="get">
+	<tr align="center">
+		<label style="font-family: monaco; font-size: 11px;">姓名：</label>
+		<input type="text" id="name" placeholder="请输入你的姓名" name="name"/>
+	</tr>
+	<br/>
+	<tr align="center">
+		<label style="font-family: monaco; font-size: 11px;">口令：</label>
+		<input type="password" id="pwd" placeholder="请输入你的口令" name="pwd"/>
+	</tr>
+	<br/>
+	<tr align="center">
+		<input type="submit" value="提交"/>
+		<input type="button" value="重置" onclick="clickResponse()">
+	</tr>
+</form>
+</body>
+<script type="text/javascript">
+	function clickResponse() {
+		document.getElementById('name').value = "";
+		document.getElementById('pwd').value = "";
+	}
+</script>
+</html>
+```
+
+### CGI脚本
+考虑到将来需要在开发板上使用，并且是为嵌入式Web Server，所以编写CGI脚本所用的语言没法选择诸如PHP，Python，Perl的主流服务器脚本。而且，这个CGI脚本所承担的任务非常轻量级，所以洒家使用了一个名为CGIC的第三方库，语言为C语言，这样既可以保证效率，也可以节省空间。为了做实验，洒家一共谢了两个CGI分别用来测试浏览器端和手机App端。下面是浏览器端的CGI脚本：
+``` C
+#include <cgic.h>
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+extern char *cgiQueryString;
+
+static void cgiGetenv(char **s, char **var)
+{
+	*s = getenv(var);
+	if(!(*s)){
+		*s = "";	
+	}
+}
+
+int cgiMain()
+{
+	cgiHeaderContentType("text/html");
+	char name[128];
+	char pwd[128];
+	
+	cgiGetenv(&cgiRemoteAddr, "REMOTE_ADDR");
+	cgiFormString("name", name, 128);
+	cgiFormString("pwd", pwd, 128);
+	fprintf(cgiOut, "<!DOCTYPE html>");
+	fprintf(cgiOut, "<html>");
+	fprintf(cgiOut, "<head><meta http-equiv=\"Content-type\" content=\"text/html;charset=UTF-8\"/><title>Test</title></head>");
+	fprintf(cgiOut, "<body><h1>hello</h1>");
+	fprintf(cgiOut, "<p>你的姓名是:%s</p>", name);
+	fprintf(cgiOut, "<p>你的密码是:%s</p>", pwd);
+	fprintf(cgiOut, "<p>你的IP地址是:%s</p></body>", cgiRemoteAddr);
+	fprintf(cgiOut, "</html>");
+
+	return 0;
+}
+
+```
+函数cgiGetenv用来获取获取环境变量，比如上述例子中的REMOTE_ADDR就是获取的浏览器端的IP地址。除此之外，还有很多cgic自定义的幻镜变量，具体的内容可以阅读cgic.c文件来查找。第18行，设定本程序返回的是一个html页面，第23和24行获取又html表单提交的数据。余下的代码就是数据的格式化输出的内容了，没啥过于复杂的东西，遂不再详述。
+
+下面的代码是App端的使用CGI脚本：
+``` C
+#include <cgic.h>
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+extern char *cgiQueryString;
+
+static void cgiGetenv(char **s, char **var)
+{
+	*s = getenv(var);
+	if(!(*s)){
+		*s = "";	
+	}
+}
+
+int cgiMain()
+{
+	cgiHeaderContentType("text/html");
+	char name[128];
+	char pwd[128];
+
+	cgiFormString("name", name, 128);
+	cgiFormString("pwd", pwd, 128);
+
+	if((strcmp("lor", name) == 0) && (strcmp("123", pwd) == 0))
+		fprintf(cgiOut, "Welcome back\n");
+	else
+		fprintf(cgiOut, "Failed to login\n");
+
+	return 0;
+}
+```
+相比于浏览器的实验脚本，App的实验脚本就简单太多了，它的功能只是验证输入的用户名和密码是否合法，除此之外，便再没什么功能了。
+
+### 实验用的服务器
+
+实验中使用的服务器，是我自己搭建的Apache服务器，在Linux下面配置服务器实在是舒爽的不得了，一条命令足已：
+
+> sudo apt-get install apache2
+
+当然了你也可以自己下载源代码，从源码编译，不过和用命令安装不同的是，apache http server的源码名是httpd，如果不知道的话，可能会费些周折。
+
+稍微麻烦些的是cgi脚本的存放目录可能会有些麻烦，不过也就是一两句话的工作也就可以轻松的配置完成了。之后，就可以愉快地做实验了。
+
+
+

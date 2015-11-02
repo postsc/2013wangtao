@@ -1,0 +1,125 @@
+﻿## 知新-2015.05.28
+
+标签（空格分隔）： 知新 车牌识别
+
+---
+
+此次知新的主要内容是利用**linux**系统提供的C API，其实就是`opendir`和`readdir`两个函数来<font color="blue">读取不同目录下的不同文件，并统计每个目录下的文件个数，并返回输出</font>。OK，闲话不多说，上代码。
+
+``` Cpp
+#include <sys/types.h>
+#include <dirent.h>
+#include <iostream>
+#include <string>
+#include <vector>
+#include <map>
+#include <cstdio>
+#include <string.h>
+
+using namespace std;
+
+const string data_nl[] = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
+			"A", "B", "C", "D", "E", "F", "G", "H", "J", "K",
+			"L", "M", "N", "P", "Q", "R", "S", "T", "U", "V",
+			"W", "X", "Y", "Z"};
+const string data_char[] = {"chuan"/*四川*/, "e"/*湖北*/, 
+			"gan"/*江西*/, "long"/*甘肃*/, "gui"/*贵州*/, "gui1"/*广西*/,
+			"hei"/*黑龙江*/, "hu"/*上海*/, "ji"/*河北*/, "jin"/*天津*/, 
+			"jing"/*北京*/, "ji1"/*吉林*/, "liao"/*辽宁*/, "lu"/*山东*/, 
+			"meng"/*内蒙古*/, "min"/*福建*/, "ning"/*宁夏*/, "qing"/*青海*/,
+			"qiong"/*海南*/, "shan"/*陕西*/, "su"/*江苏*/, "jin1"/*山西*/, 
+			"wan"/*安徽*/, "xiang"/*湖南*/, "xin"/*新疆*/, "yu"/*河南*/,
+			"yu1"/*重庆*/, "yue"/*广东*/, "yun"/*云南*/, "zang"/*西藏*/,
+			"zhe"/*浙江*/};
+
+int main(int argc, char **argv)
+{
+	string pre("/home/lor/training_samples/");
+	string charactor = pre + "charactor";
+	string num_letter = pre + "num_letter";
+	
+	map<string, int> numberOfPerNL;
+	map<string, int> numberOfPerChar;
+
+	int sum = 0;
+
+    /*opendir函数的参数只有一个，类型为DIR的指针，具体的内容可以查看linux manual*/
+	DIR *cur;
+	cur = opendir(num_letter.c_str());
+	struct dirent *content;
+	int count = 0;
+	while((content = readdir(cur)) != NULL){
+	    //判断打开的文件类型，文件夹d_type为4，而文件为8
+		if(content->d_type == 4){
+			if(!strcmp(content->d_name, ".") || !strcmp(content->d_name, "..")){
+				continue;	
+			}
+			else{
+				count = 0;
+				DIR *son;
+				struct dirent *son_content;
+				string tmp = num_letter + "/" + content->d_name;
+				son = opendir(tmp.c_str());
+				while((son_content = readdir(son)) != NULL){
+				    //判断文件是否为 ./（当前目录）和../（上层目录）
+					if(!strcmp(son_content->d_name, ".") || !strcmp(son_content->d_name, ".."))
+						continue;
+					else
+						count++;
+				}
+				numberOfPerChar[content->d_name] = count;
+				sum += count;
+			}
+		}
+	}
+
+	cur = opendir(charactor.c_str());
+	while((content = readdir(cur)) != NULL){
+	    // 判断文件是否为目录
+		if(content->d_type == 4){
+		    //判断目录是否为当前目录和上层目录
+			if(!strcmp(content->d_name, ".") || !strcmp(content->d_name, "..")){
+				continue;	
+			}
+			else{
+				count = 0;
+				DIR *son;
+				struct dirent *son_content;
+				string tmp = charactor + "/" + content->d_name;
+				son = opendir(tmp.c_str());
+				while((son_content = readdir(son)) != NULL){
+					count++;
+				}
+				numberOfPerNL[content->d_name] = count;
+				sum += count;
+			}
+		}
+	}
+	
+	map<string,int>::iterator itnl = numberOfPerChar.begin();
+	//循环打印目录名及其目录中的文件个数
+	while(itnl != numberOfPerChar.end()){
+		cout << itnl->first << "\t==>\t" << itnl->second << endl;	
+		++itnl;
+	}
+	
+	cout << numberOfPerChar.size() << endl;
+
+	map<string,int>::iterator itch = numberOfPerNL.begin();
+    //循环打印目录名及其目录中的文件个数
+	while(itch != numberOfPerNL.end()){
+		cout << itch->first << "\t==>\t" << itch->second << endl;	
+		++itch;
+	}
+	
+	cout << numberOfPerNL.size() << endl;
+
+	cout << "Total of samples" << sum << endl;
+	return 0;
+}
+
+```
+
+
+
+

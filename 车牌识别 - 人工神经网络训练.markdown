@@ -1,0 +1,345 @@
+﻿## 车牌识别 - 人工神经网络训练
+
+标签（空格分隔）： 车牌识别
+
+---
+
+``` Cpp
+#include <opencv2/core.hpp>
+#include <opencv2/highgui.hpp>
+#include <opencv2/imgproc.hpp>
+#include <opencv2/ml.hpp>
+#include <string>
+#include <iostream>
+#include <cstdlib>
+#include <sys/types.h>
+#include <dirent.h>
+#include <map>
+#include <string.h>
+
+using namespace std;
+using namespace cv;
+using namespace cv::ml;
+
+#define VERTICAL 	0	
+#define HORIZONTAL	1
+
+#define NEW_SIZE		20
+
+#define TOTAL_TRAIN_SAMPLES	16458
+#define TOTAL_TEST_SAMPLES	544
+#define PER_TRAIN_SAMPLE	80
+#define PER_TEST_SAMPLE		16
+#define CLASSES			65
+#define FEATURES		440
+
+const string data_nl[] = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
+			"A", "B", "C", "D", "E", "F", "G", "H", "J", "K",
+			"L", "M", "N", "P", "Q", "R", "S", "T", "U", "V",
+			"W", "X", "Y", "Z"};
+const string data_char[] = {"chuan"/*四川*/, "e"/*湖北*/, 
+			"gan"/*江西*/, "long"/*甘肃*/, "gui"/*贵州*/, "gui1"/*广西*/,
+			"hei"/*黑龙江*/, "hu"/*上海*/, "ji"/*河北*/, "jin"/*天津*/, 
+			"jing"/*北京*/, "ji1"/*吉林*/, "liao"/*辽宁*/, "lu"/*山东*/, 
+			"meng"/*内蒙古*/, "min"/*福建*/, "ning"/*宁夏*/, "qing"/*青海*/,
+			"qiong"/*海南*/, "shan"/*陕西*/, "su"/*江苏*/, "jin1"/*山西*/, 
+			"wan"/*安徽*/, "xiang"/*湖南*/, "xin"/*新疆*/, "yu"/*河南*/,
+			"yu1"/*重庆*/, "yue"/*广东*/, "yun"/*云南*/, "zang"/*西藏*/,
+			"zhe"/*浙江*/};
+
+Mat projectedHist(Mat input, int flag)
+{
+	int sz = (flag) ? input.rows : input.cols;
+	Mat mhist = Mat::zeros(1, sz, CV_32F);
+
+	for(int j = 0; j < sz; j++){
+		Mat data = (flag) ? input.row(j) : input.col(j);
+		mhist.at<float>(j) = countNonZero(data);
+	}
+
+	double min, max;
+	minMaxLoc(mhist, &min, &max);
+
+	if(max > 0)
+		mhist.convertTo(mhist, -1, 1.0 / max, 0);
+	
+	return mhist;
+}
+
+Mat features(Mat in, int sizeData)
+{
+	Mat vhist = projectedHist(in, VERTICAL);
+	Mat hhist = projectedHist(in, HORIZONTAL);
+
+	Mat lowData;
+	resize(in, lowData, Size(sizeData, sizeData));
+
+	int numCols = vhist.cols + hhist.cols + lowData.cols * lowData.rows;
+
+	Mat out = Mat::zeros(1, numCols, CV_32F);
+	int j = 0; 
+	for(int i = 0; i < vhist.cols; i++){
+		cout << vhist.at<float>(i) << endl;;
+		out.at<float>(j) = vhist.at<float>(i);
+		j++;
+	}
+	for(int i = 0; i < hhist.cols; i++){
+		cout << hhist.at<float>(i) << endl;;
+		out.at<float>(j) = hhist.at<float>(i);
+		j++;
+	}
+	for(int x = 0; x < lowData.cols; x++){
+		for(int y = 0; y < lowData.rows; y++){
+			out.at<float>(j) = lowData.at<uchar>(y, x);
+			cout << out.at<float>(j) << endl;
+			j++;
+		}
+	}
+
+	cout << "Done" << endl;
+
+	return out;
+}
+
+Mat getFeatures(Mat in)
+{
+	const int vertical = 0;
+	const int horizontal = 1;
+
+	Mat vhist = projectedHist(in, vertical);
+	Mat hhist = projectedHist(in, horizontal);
+
+	int numCols = vhist.cols + hhist.cols;
+	Mat out = Mat::zeros(1, numCols, CV_32F);
+
+	int j = 0;
+	for(int i = 0; i < vhist.cols; i++){
+		out.at<float>(j) = vhist.at<float>(i);
+		j++;
+	}
+
+	for(int i = 0; i < hhist.cols; i++){
+		out.at<float>(j) = hhist.at<float>(i);
+		j++;
+	}
+
+	return out;
+}
+
+int main(int argc, char **argv)
+{
+	string path_train("/home/lor/software/EasyPR/train/data/chars_recognise_ann/train_set");
+	string path_test("/home/lor/software/EasyPR/train/data/chars_recognise_ann/test_set");
+
+	string pre("/home/lor/training_samples/");
+	string charactor = pre + "charactor";
+	string num_letter = pre + "num_letter";
+
+	map<string, int> numberOfPerNL;
+	map<string, int> numberOfPerChar;
+
+	vector<int> numberOfPerSample;		// Used to store number of per training sample
+
+	int sum = 0;
+	DIR *cur;
+	struct dirent *content;
+	int count = 0;
+
+	char filename[128];
+	Mat train_set(TOTAL_TRAIN_SAMPLES, FEATURES, CV_32F);
+	Mat test_set(TOTAL_TEST_SAMPLES, FEATURES, CV_32F);
+	Mat train_set_clsfct(TOTAL_TRAIN_SAMPLES, CLASSES, CV_32F);
+	Mat test_set_clsfct(TOTAL_TEST_SAMPLES, CLASSES, CV_32F);
+
+	Mat clsfct_res(1, CLASSES, CV_32F);
+
+	ANN_MLP::Params params;
+
+	Mat sizeOfLayer(1, 3, CV_32SC1);
+	sizeOfLayer.at<int>(0) = FEATURES;
+	sizeOfLayer.at<int>(1) = 30;		// number of neurons in hidden layer
+	sizeOfLayer.at<int>(2) = 34;
+
+	params.layerSizes = sizeOfLayer;
+	params.activateFunc = ANN_MLP::SIGMOID_SYM;
+	params.fparam1 = 0;
+	params.fparam2 = 0;
+	params.trainMethod = ANN_MLP::Params::BACKPROP;
+
+	// parameters for Back Propagation
+	params.bpDWScale = 0.1;
+	params.bpMomentScale = 0.1;
+
+	// parameters for Back Propagation. The following values from
+	// opencv3.0 doc -> http://docs.opencv.org/3.0-last-rst/modules
+	params.rpDW0 = 0.1;
+	params.rpDWPlus = 1.2;
+	params.rpDWMinus = 0.5;
+	params.rpDWMin = FLT_EPSILON;
+	params.rpDWMax = 50.;
+
+	Ptr<ANN_MLP> ret = ANN_MLP::create(params);
+	ANN_MLP *myann = ret.get();
+
+
+/************************** Obtain training set. ***************************/
+	int noname = 0;
+	cur = opendir(num_letter.c_str());
+
+	// read subdirectory named "num_letter"
+	while((content = readdir(cur)) != NULL){
+		if(content->d_type == 4){
+			if(!strcmp(content->d_name, ".") || !strcmp(content->d_name, "..")){
+				continue;
+			}
+			else{
+				count = 0;
+				DIR *son;
+				struct dirent *son_content;
+				string tmp = num_letter + "/" + content->d_name;
+				son = opendir(tmp.c_str());
+				// read files in subdirectory
+				while((son_content = readdir(son)) != NULL){
+					if(!strcmp(son_content->d_name, ".") || !strcmp(son_content->d_name, "..")){
+						continue;
+					}
+					else{
+						string img_name = tmp + "/" + son_content->d_name;
+						Mat img = imread(img_name);
+						if(img.empty()){
+							cout << "Error: failed to open input pic, exiting ..." << endl;
+							exit(-1); 
+						}
+						count++;
+						cvtColor(img, img, COLOR_BGR2GRAY);
+						threshold(img, img, 128, 255, THRESH_BINARY | THRESH_OTSU);
+						for(int i = 0; i < FEATURES; i++)
+							train_set.at<float>(noname, i) = features(img, NEW_SIZE).at<uchar>(i);
+						noname++;
+					}
+				}
+				numberOfPerNL[content->d_name] = count;
+				numberOfPerSample.push_back(count);
+				sum +=count;
+			}
+		}
+	}
+
+	cur = opendir(charactor.c_str());
+
+	//read subdirectory named "charactor"
+	while((content = readdir(cur)) != NULL){
+		if(content->d_type == 4){
+			if(!strcmp(content->d_name, ".") || !strcmp(content->d_name, "..")){
+				continue;
+			}
+			else{
+				count = 0;
+				DIR *son;
+				struct dirent *son_content;
+				string tmp = charactor + "/" + content->d_name;
+				son = opendir(tmp.c_str());
+				// read files in subdirectory
+				while((son_content = readdir(son)) != NULL){
+					if(!strcmp(son_content->d_name, ".") || !strcmp(son_content->d_name, "..")){
+						continue;
+					}
+					else{
+						string img_name = tmp + "/" + son_content->d_name;
+						Mat img = imread(img_name);
+						if(img.empty()){
+							cout << "Error: failed to open input pic, exiting ..." << endl;
+							exit(-1); 
+						}
+						count++;
+						cvtColor(img, img, COLOR_BGR2GRAY);
+						threshold(img, img, 128, 255, THRESH_BINARY | THRESH_OTSU);
+						for(int i = 0; i < FEATURES; i++)
+							train_set.at<float>(noname, i) = features(img, NEW_SIZE).at<uchar>(i);
+						noname++;
+					}
+				}
+				numberOfPerChar[content->d_name] = count;
+				numberOfPerSample.push_back(count);
+				sum += count;
+			}
+		}
+	}
+
+/************************** Obtain testing set. ****************************/
+	
+	for(int i = 0; i < TOTAL_TEST_SAMPLES; i++){
+		int j = i / 16;
+		test_set_clsfct.at<float>(i, j) = 1.0;
+	}
+	
+	noname = 0;
+	for(int i = 0; i < numberOfPerSample.size(); i++){
+		for(int j = 0; j < numberOfPerSample[i]; j++){
+			test_set_clsfct.at<float>(noname, i) = 1.0;
+			noname++;
+		}
+
+	}
+
+	if(!myann->train(train_set, ROW_SAMPLE, train_set_clsfct))
+		cout << "Failure" << endl;
+	else
+		cout << "Success" << endl;
+
+	FileStorage model("/home/lor/ann_model.xml", FileStorage::WRITE || FileStorage::FORMAT_XML, "utf-8");
+	myann->write(model);
+	model.releaseAndGetString();
+
+/******************************** Test the generated model file using test sample. *****************************/
+	Mat test_sample;
+	int correct_cls = 0;
+	int wrong_cls = 0;
+
+	int clsfct[CLASSES][CLASSES] = {{}};
+	for(int t = 0; t < TOTAL_TEST_SAMPLES; t++){
+		test_sample = test_set.row(t);
+		myann->predict(test_sample, clsfct_res);
+		int maxIndex = 0;
+		float value = 0.0;
+		float maxValue = clsfct_res.at<float>(0, 0);
+		for(int index = 1; index < CLASSES; index++){
+			value = clsfct_res.at<float>(0, index);
+			if(value > maxValue){
+				maxValue = value;
+				maxIndex = index;
+			}
+		}
+
+		printf("Testing Sample %i -> class result (digit %d) \n", t, maxIndex);
+
+		if(test_set_clsfct.at<float>(t, maxIndex) != 1.0){
+			wrong_cls++;
+			for(int class_index = 0; class_index < CLASSES; class_index++){
+				if(test_set_clsfct.at<float>(t, class_index) == 1.0){
+					clsfct[class_index][maxIndex]++;
+					break;
+				}	
+			}
+		}
+		else{
+			correct_cls++;
+			clsfct[maxIndex][maxIndex]++;
+		}
+	}
+	printf("\nResults on testing dataset\n\tCorrect classi:%d (%g%%) \n\tWrong classi: %d (%g%%)",
+		correct_cls,
+		(double)correct_cls * 100 / TOTAL_TEST_SAMPLES,
+		wrong_cls,
+		(double)wrong_cls * 100/ TOTAL_TEST_SAMPLES
+		);
+
+	cout << " ";
+
+	return 0;
+}
+```
+
+
+
+
